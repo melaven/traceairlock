@@ -5,40 +5,53 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 )
 
-func main() {
-	// 1. Указываем мишень, куда шлюз будет перенаправлять чистый трафик (наш мок)
-	targetURL, err := url.Parse("http://localhost:9090")
-	if err != nil {
-		log.Fatalf("Invalid target URL: %v", err)
-	}
-
-	// 2. Инициализируем стандартный Reverse Proxy
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
-
-	// 3. Главный хендлер-перехватчик
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[TraceAirlock] Перехват трафика: %s %s", r.Method, r.URL.Path)
-
-		// 1. Извлекаем заголовок X-Session-ID
+// RequireSessionID — это наша Middleware.
+// Она принимает следующий хендлер в цепочке (next) и возвращает новый хендлер.
+func RequireSessionID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.Header.Get("X-Session-ID")
 
-		// 2. Fail-Closed: нет заголовка — жестко рубим соединение
 		if sessionID == "" {
 			log.Println("[TraceAirlock] БЛОКИРОВКА: Отсутствует X-Session-ID")
 			http.Error(w, "403 Forbidden: Missing Session ID", http.StatusForbidden)
 			return
 		}
 
-		// 3. Если заголовок есть — стримим трафик на целевой бэкенд
 		log.Printf("[TraceAirlock] Сессия %s пропущена", sessionID)
-		proxy.ServeHTTP(w, r)
-	})
 
-	// Шлюз слушает внешний мир на порту 8080
-	log.Println("TraceAirlock L7 Gateway starting on :8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+		// Если проверка пройдена, передаем запрос дальше по цепочке
+		next.ServeHTTP(w, r)
+	})
+}
+
+func main() {
+	// Читаем URL бэкенда из окружения, если нет — берем дефолтный
+	targetStr := os.Getenv("TARGET_URL")
+	if targetStr == "" {
+		targetStr = "http://localhost:9090"
+	}
+
+	targetURL, err := url.Parse(targetStr)
+	if err != nil {
+		log.Fatalf("Invalid target URL: %v", err)
+	}
+
+	// Читаем порт шлюза, если нет — ставим 8080
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	protectedHandler := RequireSessionID(proxy)
+	http.Handle("/", protectedHandler)
+
+	log.Printf("TraceAirlock L7 Gateway starting on :%s, routing to %s", port, targetStr)
+
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatalf("Gateway crashed: %v", err)
 	}
 }

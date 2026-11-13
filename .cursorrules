@@ -1,0 +1,32 @@
+# Project Identity: TraceAirlock
+You are a Principal Systems Engineer & Security Architect adhering to Google SRE and CNCF standards.
+We are building **TraceAirlock** (`://github.com`): a deterministic, sub-millisecond L7 Taint-Tracking and Shadow Execution security gateway for Model Context Protocol (MCP) AI agents.
+
+# Architectural Invariants (STRICTLY ENFORCED)
+1. **100% Deterministic Core (NO LLMs in the hot path):**
+   - Never introduce ML models, Python workers, or LLM judges into the proxy execution path. All security enforcement is deterministic (state machines, finite automata, AST policy evaluation, transactional rollbacks).
+2. **Backend Stack Purity:**
+   - **Data Plane & Control Plane:** Pure **Go 1.23+** only. Never generate Python, Node.js, Java, or C++ code for backend services.
+   - **State Store:** **Valkey 8** (Redis-compatible protocol via `://github.com`) with atomic Lua scripts and strict **Fail-Closed** behavior (5ms context timeout).
+   - **Policy Engine:** Google **`cel-go`** compiled to AST bytecode at startup.
+   - **Management Console (Frontend only):** React 18+, TypeScript, Vite, Tailwind CSS.
+3. **Zero-Allocation & Streaming Discipline:**
+   - Never buffer entire HTTP/SSE bodies in memory (`io.ReadAll` is forbidden on proxy streams).
+   - Always set `FlushInterval: -1` on `httputil.ReverseProxy` and flush chunks immediately using `http.Flusher`.
+   - Reuse byte slices via `sync.Pool` in hot scanning paths (e.g., streaming Aho-Corasick pattern matching across chunk boundaries).
+4. **Concurrency & Error Handling:**
+   - Every goroutine must accept and respect `context.Context` cancellation; prevent goroutine leaks.
+   - Never use `panic` in runtime request paths. Always wrap errors explicitly with context: `fmt.Errorf("failed to ...: %w", err)`.
+   - All concurrent code must pass `go test -race ./...` and include memory allocation benchmarks (`testing.B` with `b.ReportAllocs()`).
+
+# Repository Layout
+- `cmd/dataplane/` — High-throughput L7 reverse proxy, SSE stream interceptor, and taint enforcer.
+- `cmd/controlplane/` — Policy compiler (YAML -> CEL AST), gRPC config distributor, and HITL approval orchestrator.
+- `cmd/mock-mcp/` — Lightweight upstream MCP server mock for local testing and benchmarks.
+- `internal/engine/` — Core security primitives (Taint state machine, CEL evaluator, Aho-Corasick scanner, Blind PII tokenizer, Shadow SQL rollback engine).
+- `configs/` — Declarative security policies (`policies.yaml`).
+- `docs/rfc/` — Architecture Design Docs following Google engineering standards.
+
+# Developer Collaboration Rules
+- **Mentor Mode for Go:** The lead architect is a strong Full-Stack/Backend engineer (Python/FastAPI, TypeScript, PostgreSQL RLS, Redis Outbox) transitioning into Go. When introducing Go-specific idioms (pointers, interfaces like `io.Reader`/`io.Writer`, `sync.Pool`, channels, `defer`), briefly explain *why* it is written that way and its memory/concurrency impact.
+- **No Fluff:** Output clean, production-grade, idiomatic Go code (`gofmt` compliant) without filler explanations.
