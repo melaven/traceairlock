@@ -1,0 +1,7 @@
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: traceairlock-valkey
+    ports:
+      - "6379:6379"
+    command: valkey-server --save "" --appendonly no
